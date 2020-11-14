@@ -29,8 +29,6 @@ pub enum Cell {
 #[wasm_bindgen]
 pub struct Universe {
     map: Map,
-    width: u32,
-    height: u32,
     cells: Vec<Cell>,
 
     // TODO: Player should be struct
@@ -59,12 +57,19 @@ impl Bullet {
     }
 }
 
-struct Map {
+pub struct Map {
     height: u32,
     width: u32,
 }
 
 impl Map {
+    pub fn new(width: u32, height: u32) -> Map {
+        Map{
+            width: width,
+            height: height
+        }
+    }
+
     fn get_index(&self, column: u32, row: u32) -> usize {
         (row * self.width + column) as usize
     }
@@ -138,9 +143,15 @@ impl Map {
 }
 
 #[derive(PartialEq, Eq, Clone)]
-struct Position {
+pub struct Position {
     x: u32,
     y: u32
+}
+
+impl Position {
+    pub fn new(x: u32, y: u32) -> Position{
+        Position{x: x, y: y}
+    }
 }
 
 #[derive(Clone)]
@@ -166,7 +177,41 @@ impl FromStr for Direction {
 }
 
 
-impl Universe {
+impl Universe {  
+      pub fn new(map: Map) -> Universe{
+        utils::set_panic_hook();
+        let player_pos = Position{x: map.width/2, y: map.height/2};
+        let player_direction = Direction::Up;
+
+        let cells = (0..map.width * map.height)
+            .map(|i| {
+                if i == player_pos.y * map.width + player_pos.x { 
+                    Cell::Active 
+                } else {
+                    Cell::Inactive
+                }
+            })
+            .collect();
+        
+        let mut bullets = Vec::with_capacity(100);
+        for _ in 0..100 {
+            bullets.push(Bullet::new())
+        }
+        let cur_bullet_index = 0;
+
+        Universe {
+            cells,
+
+            player_pos,
+            player_direction,
+
+            bullets,
+            cur_bullet_index,
+
+            map,
+        }
+    }
+
     fn get_player_index(&self) -> usize {
         self.map.get_index(self.player_pos.x, self.player_pos.y)
     }
@@ -181,57 +226,39 @@ impl Universe {
         next_index
     }
 
+    pub fn get_cells(&self) -> &Vec<Cell>{
+        &self.cells
+    }
+
+    pub fn set_cells(&mut self, cell_locs: &[(u32, u32)]) {
+        for cell_loc in cell_locs.iter() {
+            let i = self.map.get_index(cell_loc.0, cell_loc.1);
+            self.cells[i] = Cell::Active;
+        }
+    }
+    
+    pub fn set_player_position(&mut self, position: Position) {
+        self.player_pos = position;
+    }
+    
 }
 
 #[wasm_bindgen]
 impl Universe {
-    pub fn new() -> Universe{
-        utils::set_panic_hook();
-
+    pub fn new_default() -> Universe {
         let height = 64;
         let width = 64;
-        let player_pos = Position{x: width/2, y: height/2};
-        let player_direction = Direction::Up;
-
-        let cells = (0..width * height)
-            .map(|i| {
-                if i == player_pos.y * width + player_pos.x { 
-                    Cell::Active 
-                } else {
-                    Cell::Inactive
-                }
-            })
-            .collect();
-        
-        let mut bullets = Vec::with_capacity(100);
-        for _ in 0..100 {
-            bullets.push(Bullet::new())
-        }
-        let cur_bullet_index = 0;
-
-        let map = Map{width: width, height: height};
-
-        Universe {
-            width,
-            height,
-            cells,
-
-            player_pos,
-            player_direction,
-
-            bullets,
-            cur_bullet_index,
-
-            map,
-        }
+        let map = Map::new(width, height);
+        Universe::new(map)
     }
 
+
     pub fn width(&self) -> u32 {
-        self.width
+        self.map.width
     }
 
     pub fn height(&self) -> u32 {
-        self.height
+        self.map.height
     }
 
     pub fn cells(&self) -> *const Cell {
@@ -257,8 +284,6 @@ impl Universe {
         bullet.direction = self.player_direction.clone();
         bullet.position = self.map.position_in_direction(&self.player_pos, &bullet.direction);
         bullet.active = true;
-        log!("{}, {}", self.player_pos.x, self.player_pos.y);
-        log!("{}, {}", bullet.position.x, bullet.position.y);
         let new_index = self.map.get_index_from_position(&bullet.position);
         self.cells[new_index] = Cell::Active;
     }
