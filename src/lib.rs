@@ -88,7 +88,8 @@ impl Asteriod {
     }
 
     // TODO: This could be on the bullet, or neither
-    fn check_collision(&mut self, bullet: &Bullet) -> Option<Position> {
+    // TODO: I don't like passing map in here
+    fn check_collision(&mut self, bullet: &Bullet, map: &Map) -> Option<Position> {
         let mut collision_index: Option<usize> = None;
         for i in 0..self.positions.len() {
             if bullet.position == self.positions[i] {
@@ -96,14 +97,34 @@ impl Asteriod {
                 break
             }
         }
+
+        let collision_position_index;
         match collision_index {
             None => return None,
             Some(i) => {
-                let position = self.positions[i];
-                self.positions.remove(i);
-                return Some(position)
+                collision_position_index = i;
             }
         }
+        let collision_position = self.positions[collision_position_index];
+        
+        let count = 0;
+        for direction in CARDINAL_DIRECTIONS.iter(){
+            let position = map.position_in_direction(&collision_position, direction);
+            for pos in self.positions {
+                if pos == collision_position {
+                    continue;
+                } else if pos == position {
+                    count += 1;
+                    continue;
+                }
+            }
+            if count == 2 {
+                log!("is 2");
+            }
+        }
+
+        self.positions.remove(collision_position_index);
+        return Some(collision_position)
     }
 }
 
@@ -228,6 +249,8 @@ enum Direction {
     Down,
     Left
 }
+
+const CARDINAL_DIRECTIONS: [Direction; 4] = [Direction::Up, Direction::Right, Direction::Down, Direction::Left];
 
 impl FromStr for Direction {
     type Err = ();
@@ -402,7 +425,7 @@ impl Universe {
             }
 
             for asteriod in self.asteriods.iter_mut() {
-                match asteriod.check_collision(bullet) {
+                match asteriod.check_collision(bullet, &self.map) {
                     None => continue,
                     Some(_) => bullet.active=false,
                 }
