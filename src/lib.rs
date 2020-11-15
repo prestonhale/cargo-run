@@ -37,6 +37,8 @@ pub struct Universe {
 
     bullets: Vec<Bullet>,
     cur_bullet_index: usize,
+
+    asteriods: Vec<Asteriod>,
 }
 
 #[derive(Clone)]
@@ -55,6 +57,11 @@ impl Bullet {
             direction: direction,
         }
     }
+}
+
+struct Asteriod {
+    position: Position,
+    radius: u32
 }
 
 pub struct Map {
@@ -76,6 +83,16 @@ impl Map {
 
     fn get_bullet_index(&self, bullet: &Bullet) -> usize {
         self.get_index(bullet.position.x, bullet.position.y)
+    }
+
+    fn get_asteroid_indexes(&self, asteriod: &Asteriod) -> Vec<usize>{
+        let mut indexes = Vec::new();
+        for y in (asteriod.position.y - asteriod.radius)..(asteriod.position.y + asteriod.radius + 1) {
+            for x in (asteriod.position.x - asteriod.radius)..(asteriod.position.x + asteriod.radius + 1) {
+                indexes.push(self.get_index_from_position(&Position{x: x, y: y}))
+            }
+        }
+        indexes
     }
     
     fn position_in_direction(&self, position: &Position, direction: &Direction) -> Position {
@@ -137,7 +154,14 @@ impl Map {
         new_position
     }
     
+    // Needs to check if index is outside map
     fn get_index_from_position(&self, position: &Position) -> usize {
+        if position.x > self.width - 1 {
+            panic!("width is wider than map")
+        }
+        if position.y > self.height - 1 {
+            panic!("height is larger than map")
+        }
         (position.y * self.width + position.x) as usize
     }
 }
@@ -180,10 +204,16 @@ impl FromStr for Direction {
 impl Universe {  
       pub fn new(map: Map) -> Universe{
         utils::set_panic_hook();
+
         let player_pos = Position{x: map.width/2, y: map.height/2};
         let player_direction = Direction::Up;
 
-        let cells = (0..map.width * map.height)
+        let asteriods = vec![Asteriod{
+            position: Position{x: 45, y: 45},
+            radius: 3
+        }];
+
+        let mut cells: Vec<Cell> = (0..map.width * map.height)
             .map(|i| {
                 if i == player_pos.y * map.width + player_pos.x { 
                     Cell::Active 
@@ -199,6 +229,11 @@ impl Universe {
         }
         let cur_bullet_index = 0;
 
+        let asteriod_indexes = map.get_asteroid_indexes(&asteriods[0]);
+        for i in asteriod_indexes.iter(){
+            cells[*i] = Cell::Active;
+        }
+
         Universe {
             cells,
 
@@ -208,7 +243,9 @@ impl Universe {
             bullets,
             cur_bullet_index,
 
-            map,
+            asteriods,
+
+            map
         }
     }
 
@@ -265,16 +302,38 @@ impl Universe {
         self.cells.as_ptr()
     }
 
-    // TODO: Direction should be enum
+    fn render(&mut self) {
+        for idx in 0..self.cells.len() {
+            self.cells[idx] = Cell::Inactive;
+        }
+
+        // TODO: Build a "renderable" trait that describes which indexes an object occupies
+        let player_idx = self.map.get_index_from_position(&self.player_pos);
+        self.cells[player_idx] = Cell::Active;
+
+        for bullet in self.bullets.iter() {
+            if !bullet.active {
+                continue;
+            }
+            let idx = self.map.get_bullet_index(bullet);
+            self.cells[idx] = Cell::Active;
+        }
+
+        for asteriod in self.asteriods.iter(){
+            let asteriod_index = self.map.get_asteroid_indexes(asteriod);
+            for idx in asteriod_index {
+                self.cells[idx] = Cell::Active;
+            }
+        }
+    }
+
     pub fn move_player(&mut self, command: String) {
         let old_index = self.get_player_index();
-        self.cells[old_index] = Cell::Inactive;
 
         print!("{}", command);
         self.player_direction = Direction::from_str(&command[..]).unwrap();
         self.player_pos = self.map.position_in_direction(&self.player_pos, &self.player_direction);
         let new_index = self.map.get_index_from_position(&self.player_pos);
-        self.cells[new_index] = Cell::Active;
     }
 
     pub fn shoot(&mut self) {
@@ -285,7 +344,6 @@ impl Universe {
         bullet.position = self.map.position_in_direction(&self.player_pos, &bullet.direction);
         bullet.active = true;
         let new_index = self.map.get_index_from_position(&bullet.position);
-        self.cells[new_index] = Cell::Active;
     }
     
     pub fn tick(&mut self) { 
@@ -300,9 +358,9 @@ impl Universe {
                 bullet.active = false;
             } else {
                 bullet.position = new_bullet_pos;
-                let new_index = self.map.get_index_from_position(&bullet.position);
-                self.cells[new_index] = Cell::Active;
             }
         }
+
+        self.render()
     }
 }
