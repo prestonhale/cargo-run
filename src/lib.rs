@@ -26,6 +26,10 @@ pub enum Cell {
     Active = 1,
 }
 
+pub trait renderable {
+    fn render(&self, map: &Map) -> Vec<usize>;
+}
+
 #[wasm_bindgen]
 pub struct Universe {
     map: Map,
@@ -59,6 +63,15 @@ impl Bullet {
     }
 }
 
+impl renderable for Bullet {
+    fn render(&self, map: &Map) -> Vec<usize> {
+        if !self.active{
+            return vec![]
+        }
+        vec![map.get_index_from_position(&self.position)]
+    }
+}
+
 struct Asteriod {
     positions: Vec<Position>,
 }
@@ -72,15 +85,6 @@ impl Asteriod {
             }
         }
         Asteriod{positions: positions}
-    }
-    
-    // TODO: I don't like passing in map here
-    fn render(&self, map: &Map) -> Vec<usize> {
-        let mut indexes = Vec::new();
-        for position in self.positions.iter() {
-            indexes.push(map.get_index_from_position(&position))
-        }
-        indexes
     }
 
     // TODO: This could be on the bullet, or neither
@@ -100,6 +104,16 @@ impl Asteriod {
                 return Some(position)
             }
         }
+    }
+}
+
+impl renderable for Asteriod {
+    fn render(&self, map: &Map) -> Vec<usize> {
+        let mut indexes = Vec::new();
+        for position in self.positions.iter() {
+            indexes.push(map.get_index_from_position(&position))
+        }
+        indexes
     }
 }
 
@@ -306,7 +320,31 @@ impl Universe {
         self.player_pos = position;
     }
 
+    fn render(&mut self) {
+        for idx in 0..self.cells.len() {
+            self.cells[idx] = Cell::Inactive;
+        }
 
+        let mut alive_indexes = Vec::new();
+
+        let player_idx = self.map.get_index_from_position(&self.player_pos);
+        alive_indexes.push(player_idx);
+
+        // TODO: Track all renderable objects somewhere
+        for bullet in self.bullets.iter() {
+            let mut bullet_idx = bullet.render(&self.map);
+            alive_indexes.append(&mut bullet_idx);
+        }
+
+        for asteriod in self.asteriods.iter() {
+            let mut asteriod_indexes = asteriod.render(&self.map);
+            alive_indexes.append(&mut asteriod_indexes);
+        }
+
+        for idx in alive_indexes.iter() {
+            self.cells[*idx] = Cell::Active;
+        }
+    }
 }
 
 #[wasm_bindgen]
@@ -331,30 +369,6 @@ impl Universe {
         self.cells.as_ptr()
     }
 
-    fn render(&mut self) {
-        for idx in 0..self.cells.len() {
-            self.cells[idx] = Cell::Inactive;
-        }
-
-        // TODO: Build a "renderable" trait that describes which indexes an object occupies
-        let player_idx = self.map.get_index_from_position(&self.player_pos);
-        self.cells[player_idx] = Cell::Active;
-
-        for bullet in self.bullets.iter() {
-            if !bullet.active {
-                continue;
-            }
-            let idx = self.map.get_bullet_index(bullet);
-            self.cells[idx] = Cell::Active;
-        }
-
-        for asteriod in self.asteriods.iter() {
-            let asteriod_indexes = asteriod.render(&self.map);
-            for i in asteriod_indexes.iter(){
-                self.cells[*i] = Cell::Active;
-            }
-        }
-    }
 
     pub fn move_player(&mut self, command: String) {
         print!("{}", command);
