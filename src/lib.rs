@@ -60,8 +60,47 @@ impl Bullet {
 }
 
 struct Asteriod {
-    position: Position,
-    radius: u32
+    positions: Vec<Position>,
+}
+
+impl Asteriod {
+    fn new(position: Position, diameter: u32) -> Asteriod {
+        let mut positions = Vec::new();
+        for y in (position.y)..(position.y + diameter) {
+            for x in (position.x)..(position.x + diameter) {
+                positions.push(Position{x: x, y: y});
+            }
+        }
+        Asteriod{positions: positions}
+    }
+    
+    // TODO: I don't like passing in map here
+    fn render(&self, map: &Map) -> Vec<usize> {
+        let mut indexes = Vec::new();
+        for position in self.positions.iter() {
+            indexes.push(map.get_index_from_position(&position))
+        }
+        indexes
+    }
+
+    // TODO: This could be on the bullet, or neither
+    fn check_collision(&mut self, bullet: &Bullet) -> Option<Position> {
+        let mut collision_index: Option<usize> = None;
+        for i in 0..self.positions.len() {
+            if bullet.position == self.positions[i] {
+                collision_index = Some(i);
+                break
+            }
+        }
+        match collision_index {
+            None => return None,
+            Some(i) => {
+                let position = self.positions[i];
+                self.positions.remove(i);
+                return Some(position)
+            }
+        }
+    }
 }
 
 pub struct Map {
@@ -85,16 +124,6 @@ impl Map {
         self.get_index(bullet.position.x, bullet.position.y)
     }
 
-    fn get_asteroid_indexes(&self, asteriod: &Asteriod) -> Vec<usize>{
-        let mut indexes = Vec::new();
-        for y in (asteriod.position.y - asteriod.radius)..(asteriod.position.y + asteriod.radius + 1) {
-            for x in (asteriod.position.x - asteriod.radius)..(asteriod.position.x + asteriod.radius + 1) {
-                indexes.push(self.get_index_from_position(&Position{x: x, y: y}))
-            }
-        }
-        indexes
-    }
-    
     fn position_in_direction(&self, position: &Position, direction: &Direction) -> Position {
         let new_position: Position;
         match direction {
@@ -166,7 +195,7 @@ impl Map {
     }
 }
 
-#[derive(PartialEq, Eq, Clone)]
+#[derive(PartialEq, Eq, Copy, Clone)]
 pub struct Position {
     x: u32,
     y: u32
@@ -208,10 +237,10 @@ impl Universe {
         let player_pos = Position{x: map.width/2, y: map.height/2};
         let player_direction = Direction::Up;
 
-        let asteriods = vec![Asteriod{
-            position: Position{x: 45, y: 45},
-            radius: 3
-        }];
+        let asteriods = vec![Asteriod::new(
+            Position{x: 45, y: 45},
+            9
+        )];
 
         let mut cells: Vec<Cell> = (0..map.width * map.height)
             .map(|i| {
@@ -229,9 +258,12 @@ impl Universe {
         }
         let cur_bullet_index = 0;
 
-        let asteriod_indexes = map.get_asteroid_indexes(&asteriods[0]);
-        for i in asteriod_indexes.iter(){
-            cells[*i] = Cell::Active;
+        // TODO: Set up universe then call render here; don't manually set cells
+        for asteriod in asteriods.iter() {
+            let asteriod_indexes = asteriod.render(&map);
+            for i in asteriod_indexes.iter(){
+                cells[*i] = Cell::Active;
+            }
         }
 
         Universe {
@@ -247,10 +279,6 @@ impl Universe {
 
             map
         }
-    }
-
-    fn get_player_index(&self) -> usize {
-        self.map.get_index(self.player_pos.x, self.player_pos.y)
     }
 
     fn next_bullet_index(&mut self) -> usize {
@@ -277,7 +305,8 @@ impl Universe {
     pub fn set_player_position(&mut self, position: Position) {
         self.player_pos = position;
     }
-    
+
+
 }
 
 #[wasm_bindgen]
@@ -319,21 +348,18 @@ impl Universe {
             self.cells[idx] = Cell::Active;
         }
 
-        for asteriod in self.asteriods.iter(){
-            let asteriod_index = self.map.get_asteroid_indexes(asteriod);
-            for idx in asteriod_index {
-                self.cells[idx] = Cell::Active;
+        for asteriod in self.asteriods.iter() {
+            let asteriod_indexes = asteriod.render(&self.map);
+            for i in asteriod_indexes.iter(){
+                self.cells[*i] = Cell::Active;
             }
         }
     }
 
     pub fn move_player(&mut self, command: String) {
-        let old_index = self.get_player_index();
-
         print!("{}", command);
         self.player_direction = Direction::from_str(&command[..]).unwrap();
         self.player_pos = self.map.position_in_direction(&self.player_pos, &self.player_direction);
-        let new_index = self.map.get_index_from_position(&self.player_pos);
     }
 
     pub fn shoot(&mut self) {
@@ -343,7 +369,6 @@ impl Universe {
         bullet.direction = self.player_direction.clone();
         bullet.position = self.map.position_in_direction(&self.player_pos, &bullet.direction);
         bullet.active = true;
-        let new_index = self.map.get_index_from_position(&bullet.position);
     }
     
     pub fn tick(&mut self) { 
@@ -351,13 +376,22 @@ impl Universe {
             if !bullet.active {
                 continue;
             }
+
             let old_index = self.map.get_bullet_index(bullet);
             self.cells[old_index] = Cell::Inactive;
             let new_bullet_pos = self.map.position_in_direction(&bullet.position, &bullet.direction);
+
             if new_bullet_pos == bullet.position { // Bullet is at edge of map
                 bullet.active = false;
             } else {
                 bullet.position = new_bullet_pos;
+            }
+
+            for asteriod in self.asteriods.iter_mut() {
+                match asteriod.check_collision(bullet) {
+                    None => continue,
+                    Some(_) => bullet.active=false,
+                }
             }
         }
 
