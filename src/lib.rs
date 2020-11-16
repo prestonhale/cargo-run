@@ -26,8 +26,8 @@ pub enum Cell {
     Active = 1,
 }
 
-pub trait renderable {
-    fn render(&self, map: &Map) -> Vec<usize>;
+pub trait Renderable {
+    fn render(&self) -> Vec<&Position>;
 }
 
 #[wasm_bindgen]
@@ -63,12 +63,12 @@ impl Bullet {
     }
 }
 
-impl renderable for Bullet {
-    fn render(&self, map: &Map) -> Vec<usize> {
+impl Renderable for Bullet {
+    fn render(&self) -> Vec<&Position> {
         if !self.active{
             return vec![]
         }
-        vec![map.get_index_from_position(&self.position)]
+        vec![&self.position]
     }
 }
 
@@ -87,52 +87,84 @@ impl Asteriod {
         Asteriod{positions: positions}
     }
 
-    // TODO: This could be on the bullet, or neither
-    // TODO: I don't like passing map in here
+    // TODO: Map should check collision and pass position to asteriod for removal/asteriod separation
     fn check_collision(&mut self, bullet: &Bullet, map: &Map) -> Option<Position> {
-        let mut collision_index: Option<usize> = None;
-        for i in 0..self.positions.len() {
-            if bullet.position == self.positions[i] {
-                collision_index = Some(i);
-                break
-            }
-        }
-
-        let collision_position_index;
-        match collision_index {
+        let collision_position_option = map.check_collision(self, bullet);
+        let collision_position;
+        match collision_position_option {
+            Some(position) => collision_position=position,
             None => return None,
-            Some(i) => {
-                collision_position_index = i;
-            }
-        }
-        let collision_position = self.positions[collision_position_index];
-        
-        let count = 0;
-        for direction in CARDINAL_DIRECTIONS.iter(){
-            let position = map.position_in_direction(&collision_position, direction);
-            for pos in self.positions {
-                if pos == collision_position {
-                    continue;
-                } else if pos == position {
-                    count += 1;
-                    continue;
-                }
-            }
-            if count == 2 {
-                log!("is 2");
-            }
         }
 
-        self.positions.remove(collision_position_index);
+        // Remove from positions
+        let mut collision_position_index: Option<usize> = None;
+        for i in 0..self.positions.len(){
+            if self.positions[i] == collision_position {
+                collision_position_index = Some(i);
+            }
+        }
+        match collision_position_index {
+            None => panic!("could not find collision index"),
+            Some(i) => {
+                self.positions.remove(i);
+                ();
+            }
+        }
+       
+        // Check if this collision caused an asteriod separation
+        // TODO: Making asteriod position into a map is probably faster/better
+        let up = map.position_in_direction(&collision_position, &Direction::Up);
+        let right = map.position_in_direction(&collision_position, &Direction::Right);
+        let down = map.position_in_direction(&collision_position, &Direction::Down);
+        let left = map.position_in_direction(&collision_position, &Direction::Left);
+        let mut has_up = false;
+        let mut has_right = false;
+        let mut has_down = false;
+        let mut has_left = false;
+        let mut count = 0;
+        for pos in self.positions.iter() {
+            match pos {
+                _ if *pos == up => {
+                    has_up = true;
+                    count += 1;
+                }
+                _ if *pos == right => {
+                    has_right = true;
+                    count += 1;
+                }
+                _ if *pos == down => {
+                    has_down = true;
+                    count +=1;
+                }
+                _ if *pos == left => {
+                    has_left = true;
+                    count += 1;
+                }
+                _ => (),
+            }
+        }
+        let mut horizontal = false;
+        let mut vertical = false;
+        if has_up && has_down {
+            horizontal = true;
+        }
+        if has_right && has_left {
+            vertical = true
+        }
+        if count == 2 && ((vertical && !horizontal) || (horizontal && !vertical)) {
+            log!("separate");
+        }
+
+
         return Some(collision_position)
     }
 }
 
-impl renderable for Asteriod {
-    fn render(&self, map: &Map) -> Vec<usize> {
+impl Renderable for Asteriod {
+    fn render(&self) -> Vec<&Position> {
         let mut indexes = Vec::new();
         for position in self.positions.iter() {
-            indexes.push(map.get_index_from_position(&position))
+            indexes.push(position)
         }
         indexes
     }
@@ -228,6 +260,17 @@ impl Map {
         }
         (position.y * self.width + position.x) as usize
     }
+
+    fn check_collision(&self, obj1: &impl Renderable, obj2: &impl Renderable) -> Option<Position>{
+        for obj1_position in obj1.render(){
+            for obj2_position in obj2.render(){
+                if obj1_position == obj2_position {
+                    return Some(*obj1_position)
+                }
+            }
+        }
+        None
+    }
 }
 
 #[derive(PartialEq, Eq, Copy, Clone)]
@@ -295,14 +338,6 @@ impl Universe {
         }
         let cur_bullet_index = 0;
 
-        // TODO: Set up universe then call render here; don't manually set cells
-        for asteriod in asteriods.iter() {
-            let asteriod_indexes = asteriod.render(&map);
-            for i in asteriod_indexes.iter(){
-                cells[*i] = Cell::Active;
-            }
-        }
-
         Universe {
             cells,
 
@@ -348,24 +383,24 @@ impl Universe {
             self.cells[idx] = Cell::Inactive;
         }
 
-        let mut alive_indexes = Vec::new();
+        let mut alive_positions = Vec::new();
 
-        let player_idx = self.map.get_index_from_position(&self.player_pos);
-        alive_indexes.push(player_idx);
+        alive_positions.push(&self.player_pos);
 
         // TODO: Track all renderable objects somewhere
         for bullet in self.bullets.iter() {
-            let mut bullet_idx = bullet.render(&self.map);
-            alive_indexes.append(&mut bullet_idx);
+            let mut bullet_pos = bullet.render();
+            alive_positions.append(&mut bullet_pos);
         }
 
         for asteriod in self.asteriods.iter() {
-            let mut asteriod_indexes = asteriod.render(&self.map);
-            alive_indexes.append(&mut asteriod_indexes);
+            let mut asteriod_pos = asteriod.render();
+            alive_positions.append(&mut asteriod_pos);
         }
 
-        for idx in alive_indexes.iter() {
-            self.cells[*idx] = Cell::Active;
+        for pos in alive_positions.iter() {
+            let idx = self.map.get_index_from_position(pos);
+            self.cells[idx] = Cell::Active;
         }
     }
 }
