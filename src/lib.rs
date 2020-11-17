@@ -42,7 +42,7 @@ pub struct Universe {
     bullets: Vec<Bullet>,
     cur_bullet_index: usize,
 
-    asteriods: Vec<Asteriod>,
+    asteriods: Vec<Asteroid>,
 }
 
 #[derive(Clone)]
@@ -72,34 +72,66 @@ impl Renderable for Bullet {
     }
 }
 
-struct Asteriod {
+struct Asteroid {
     positions: Vec<Position>,
 }
 
-impl Asteriod {
-    fn new(position: Position, diameter: u32) -> Asteriod {
+impl Asteroid {
+    fn new(position: Position, diameter: u32) -> Asteroid {
         let mut positions = Vec::new();
         for y in (position.y)..(position.y + diameter) {
             for x in (position.x)..(position.x + diameter) {
                 positions.push(Position{x: x, y: y});
             }
         }
-        Asteriod{positions: positions}
+        Asteroid{positions: positions}
     }
 
-    // TODO: Map should check collision and pass position to asteriod for removal/asteriod separation
-    fn check_collision(&mut self, bullet: &Bullet, map: &Map) -> Option<Position> {
-        let collision_position_option = map.check_collision(self, bullet);
-        let collision_position;
-        match collision_position_option {
-            Some(position) => collision_position=position,
-            None => return None,
-        }
+    fn generate_asteriod_from_position(parent_asteriod: &Asteroid, position: &Position, map: &Map) -> Asteroid{
+        let new_asteroid_positions = Asteroid::find_related_positions(vec![*position], vec![*position], parent_asteriod, map);
+        log!("Created asteroid with {} squares", new_asteroid_positions.len());
+        Asteroid{positions: new_asteroid_positions}
+    }
 
+    // TODO: Change from recursion to 'while let'
+    fn find_related_positions(mut new_asteroid_positions: Vec<Position>, mut unchecked_positions: Vec<Position>, parent_asteriod: &Asteroid, map: &Map) -> Vec<Position>{
+        let position;
+        if unchecked_positions.len() == 0 {
+            return new_asteroid_positions
+        } else {
+            // TODO: Handle error
+            position = unchecked_positions.pop().unwrap()
+        }
+        for dir in CARDINAL_DIRECTIONS.iter() {
+            let position_in_direction = map.position_in_direction(&position, dir);
+            for parent_pos in parent_asteriod.positions.iter(){
+                if *parent_pos == position_in_direction {
+
+                    let mut already_checked = false;
+                    for checked_pos in new_asteroid_positions.iter() {
+                        if *checked_pos == position_in_direction {
+                            already_checked = true;
+                        }
+                    }
+
+                    if !already_checked {
+                        new_asteroid_positions.push(position_in_direction);
+                        unchecked_positions.push(position_in_direction);
+                        break;
+                    }
+                }
+            }
+        }
+        Asteroid::find_related_positions(new_asteroid_positions, unchecked_positions, parent_asteriod, map)
+    }
+
+
+    // TODO: Map should check collision and pass position to asteriod for removal/asteriod separation
+    fn process_collision(&mut self, collision_position: &Position, map: &Map) -> Option<(Asteroid, Asteroid)> {
         // Remove from positions
         let mut collision_position_index: Option<usize> = None;
         for i in 0..self.positions.len(){
-            if self.positions[i] == collision_position {
+            if self.positions[i] == *collision_position {
                 collision_position_index = Some(i);
             }
         }
@@ -146,21 +178,27 @@ impl Asteriod {
         let mut horizontal = false;
         let mut vertical = false;
         if has_up && has_down {
-            horizontal = true;
+            vertical = true;
         }
         if has_right && has_left {
-            vertical = true
+            horizontal = true
         }
-        if count == 2 && ((vertical && !horizontal) || (horizontal && !vertical)) {
-            log!("separate");
+        let (asteroid_1, asteroid_2): (Asteroid, Asteroid);
+        if count == 2 && (vertical && !horizontal) {
+            asteroid_1 = Asteroid::generate_asteriod_from_position(self, &up, map);
+            asteroid_2 = Asteroid::generate_asteriod_from_position(self, &down, map);
+            return Some((asteroid_1, asteroid_2));
+        } else if count == 2 && (horizontal && !vertical) {
+            asteroid_1 = Asteroid::generate_asteriod_from_position(self, &right, map);
+            asteroid_2 = Asteroid::generate_asteriod_from_position(self, &left, map);
+            return Some((asteroid_1, asteroid_2));
         }
 
-
-        return Some(collision_position)
+        return None
     }
 }
 
-impl Renderable for Asteriod {
+impl Renderable for Asteroid {
     fn render(&self) -> Vec<&Position> {
         let mut indexes = Vec::new();
         for position in self.positions.iter() {
@@ -317,7 +355,7 @@ impl Universe {
         let player_pos = Position{x: map.width/2, y: map.height/2};
         let player_direction = Direction::Up;
 
-        let asteriods = vec![Asteriod::new(
+        let asteriods = vec![Asteroid::new(
             Position{x: 45, y: 45},
             9
         )];
@@ -459,11 +497,27 @@ impl Universe {
                 bullet.position = new_bullet_pos;
             }
 
-            for asteriod in self.asteriods.iter_mut() {
-                match asteriod.check_collision(bullet, &self.map) {
+            let mut asteroid_removal_index: usize = 0;
+            let mut collision_result: Option<(Asteroid, Asteroid)> = None;
+            for (i, asteroid) in self.asteriods.iter_mut().enumerate() {
+                match self.map.check_collision(bullet, asteroid) {
                     None => continue,
-                    Some(_) => bullet.active=false,
+                    Some(collision_position) => {
+                        collision_result = asteroid.process_collision(&collision_position, &self.map);
+                        bullet.active=false;
+                        asteroid_removal_index = i;
+                        break;
+                    }
                 }
+            }
+            match collision_result{
+                Some((a_1, a_2)) => {
+                    self.asteriods.remove(asteroid_removal_index);
+                    self.asteriods.push(a_1);
+                    self.asteriods.push(a_2);
+                    log!("{}", self.asteriods.len());
+                },
+                None => ()
             }
         }
 
